@@ -1,0 +1,165 @@
+﻿import XCTest
+
+final class FlowUITests: XCTestCase {
+    private enum Language: String, CaseIterable {
+        case en
+        case simplified = "zh-Hans"
+        case traditional = "zh-Hant"
+
+        var locale: String {
+            switch self {
+            case .en: "en_US"
+            case .simplified: "zh_CN"
+            case .traditional: "zh_TW"
+            }
+        }
+    }
+
+    private let app = XCUIApplication()
+    private let namespace = UUID().uuidString
+
+    override func setUp() {
+        continueAfterFailure = false
+    }
+
+    private func launch(_ fixture: String, language: Language = .en, extra: [String] = [], env: [String: String] = [:]) {
+        app.launchArguments = ["-ui-testing", "-reset", "-data-id", namespace, "-fixture", fixture,
+                               "-AppleLanguages", "(\(language.rawValue))", "-AppleLocale", language.locale] + extra
+        app.launchEnvironment = env
+        app.launch()
+    }
+
+    private func element(_ id: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+
+    private func tapHeader(_ id: String, file: StaticString = #filePath, line: UInt = #line) {
+        let target = element(id)
+        XCTAssertTrue(target.waitForExistence(timeout: 8), id, file: file, line: line)
+        target.tap()
+    }
+
+    private func tap(_ id: String, file: StaticString = #filePath, line: UInt = #line) {
+        let target = element(id)
+        if !target.waitForExistence(timeout: 4) {
+            for _ in 0..<4 where !target.exists { app.swipeUp() }
+        }
+        XCTAssertTrue(target.waitForExistence(timeout: 4), id, file: file, line: line)
+        for _ in 0..<5 where !target.isHittable { app.swipeUp() }
+        target.tap()
+    }
+
+    private func exists(_ id: String, timeout: TimeInterval = 8, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(element(id).waitForExistence(timeout: timeout), id, file: file, line: line)
+    }
+
+    private func screenshot(_ name: String) {
+        let image = app.screenshot()
+        let attachment = XCTAttachment(screenshot: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if let path = ProcessInfo.processInfo.environment["TEST_RUNNER_SHOTS_DIR"] ?? ProcessInfo.processInfo.environment["SHOTS_DIR"] {
+            let folder = URL(fileURLWithPath: path, isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? image.pngRepresentation.write(to: folder.appendingPathComponent(name + ".png"))
+        }
+    }
+
+    func testSwapIsOneTap() {
+        launch("full")
+        exists("home.out")
+        tap("home.swap")
+        tap("reaction.loved")
+        exists("home.out")
+        XCTAssertTrue(element("home.out").label.contains("Puzzles"), element("home.out").label)
+    }
+
+    func testFirstBinFromEmpty() {
+        launch("empty")
+        tap("empty.add")
+        exists("home.out")
+        exists("home.add")
+    }
+
+    func testTakeOutChosenBin() {
+        launch("full")
+        tap("home.bin.2")
+        tap("bin.take-out")
+        tap("reaction.skip")
+        XCTAssertTrue(element("home.out").waitForExistence(timeout: 6))
+        XCTAssertTrue(element("home.out").label.contains("Cars"), element("home.out").label)
+    }
+
+    func testTenthSwapMilestone() {
+        launch("milestone")
+        tap("home.swap")
+        tap("reaction.okay")
+        exists("milestone.share", timeout: 8)
+    }
+
+    func testFreeLimitAfterTrial() {
+        launch("full", extra: ["-expired"])
+        tap("home.add")
+        exists("paywall.title")
+    }
+
+    func testPasteSetupCode() {
+        let json = #"{"cycleDays":5,"outCount":1,"rooms":["Playroom"]}"#
+        let code = "TOY1:" + Data(json.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        launch("full", env: ["UITEST_CODE": code])
+        tapHeader("home.settings")
+        sleep(2)
+        tap("settings.paste-code")
+        exists("toast")
+    }
+
+    func testStoreScreenshots() {
+        for language in Language.allCases {
+            launch("full", language: language)
+            exists("home.out")
+            screenshot("store-\(language.rawValue)-01-home")
+
+            tap("home.swap")
+            exists("reaction.loved")
+            screenshot("store-\(language.rawValue)-02-swap")
+            tap("reaction.loved")
+            if element("milestone.share").waitForExistence(timeout: 3) { app.swipeDown(velocity: .fast) }
+            sleep(1)
+
+            tap("home.bin.2")
+            exists("bin.take-out")
+            screenshot("store-\(language.rawValue)-03-bin")
+            app.navigationBars.buttons.firstMatch.tap()
+
+            tapHeader("home.share")
+            sleep(2)
+            exists("share.card")
+            screenshot("store-\(language.rawValue)-04-share")
+            app.terminate()
+
+            launch("full", language: language)
+            tapHeader("home.settings")
+            exists("settings.paste-code")
+            screenshot("store-\(language.rawValue)-05-settings")
+            app.terminate()
+        }
+        launch("full", language: .simplified, extra: ["-paywall"])
+        exists("paywall.title")
+        screenshot("paid-01-paywall")
+    }
+
+    func testReviewDemo() {
+        launch("full")
+        exists("home.out")
+        sleep(3)
+        tap("home.swap"); sleep(2)
+        tap("reaction.loved"); sleep(2)
+        if element("milestone.share").waitForExistence(timeout: 3) { app.swipeDown(velocity: .fast); sleep(1) }
+        tap("home.bin.2"); sleep(2)
+        tap("bin.take-out"); sleep(1)
+        tap("reaction.skip"); sleep(2)
+        tapHeader("home.settings"); sleep(3)
+    }
+}
